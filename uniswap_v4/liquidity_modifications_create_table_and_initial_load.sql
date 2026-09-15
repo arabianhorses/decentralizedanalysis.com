@@ -5,10 +5,14 @@ robinhood_uniswapv4_liquidity_modifications
 
 One row per Uniswap v4 liquidity change on Robinhood Chain: every PoolManager(0x8366a39cc670b4001a1121b8f6a443a643e40951) 
 ModifyLiquidity(0xf208f4912782fd25c7f114ca3723a2d5dd6f3bcc3ac8db5af63baa85f711d5ec) event.
+Source: robinhood.robinhood_uniswapv4_raw_logs. (or however you call the logs)
 
 liquidityDelta > 0 adds liquidity, < 0 removes it, = 0 only collects fees (v4 has no separate Collect event).
 When sender is the PositionManager (0x58daec3116aae6d93017baaea7749052e8a04fa7), salt is the position NFT tokenId as bytes32:
 the same hex as topic3 of that PositionManager's ERC-721 Transfer events, so the two join directly on it.
+
+Needs the UDFs in udf/hex_decoding_udfs.sql (run that first):
+hex_to_int (tickLower, tickUpper, liquidityDelta).
 
 */
   CREATE TABLE `decentralizedanalysis.robinhood.robinhood_uniswapv4_liquidity_modifications` (
