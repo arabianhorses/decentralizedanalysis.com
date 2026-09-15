@@ -1,11 +1,16 @@
 /*
-There are 2 SQL scripts first one for creating the table and define the specs, second one for initial load, robinhood_uniswapv4_swaps
+There are 2 SQL scripts first one for creating the table and define the specs, second one for initial load
+
+robinhood_uniswapv4_swaps
 One row per Uniswap v4 swap on Robinhood Chain: every PoolManager(0x8366a39cc670b4001a1121b8f6a443a643e40951) Swap(0x40e9cecb9f5f1f1c5b9c97dec2917b7ee92e57ba5563708daca94dd84ad7112f)
 event.
 Source: robinhood.robinhood_uniswapv4_raw_logs. (or however you call the logs)
 
 amount0 / amount1 are from the swapper's side: negative = the swapper paid that token into the pool,
 positive = the swapper received it. This is the opposite of Uniswap v3's Swap event.
+
+Needs the UDFs in udf/hex_decoding_udfs.sql (run that first):
+hex_to_int (amount0, amount1, tick), hex_to_uint (liquidity, fee), hex_to_uint_str (sqrtPriceX96).
 
 */
   CREATE TABLE `decentralizedanalysis.robinhood.robinhood_uniswapv4_swaps` (
