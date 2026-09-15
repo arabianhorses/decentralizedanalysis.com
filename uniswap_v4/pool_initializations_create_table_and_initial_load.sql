@@ -6,6 +6,9 @@ One row per Uniswap v4 pool on Robinhood Chain: every PoolManager(0x8366a39cc670
 event.
 Source: robinhood.robinhood_uniswapv4_raw_logs. (or however you call the logs)
 
+Needs the UDFs in udf/hex_decoding_udfs.sql (run that first):
+hex_to_uint (fee), hex_to_int (tickSpacing, tick), hex_to_uint_str (sqrtPriceX96).
+
 */
   CREATE TABLE `decentralizedanalysis.robinhood.robinhood_uniswapv4_pool_initializations` (
   block_date        DATE       NOT NULL,
