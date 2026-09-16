@@ -115,7 +115,8 @@ SELECT
 FROM `decentralizedanalysis.robinhood.robinhood_uniswapv4_raw_logs`
 WHERE block_date >= max_date
   AND generatedIndex > max_gidx
-  AND topic0 = '0xf208f4912782fd25c7f114ca3723a2d5dd6f3bcc3ac8db5af63baa85f711d5ec' -- ModifyLiquidity (index_topic_1 bytes32 id, index_topic_2 address sender, int24 tickLower, int24 tickUpper, int256 liquidityDelta, bytes32 salt);
+  AND topic0 = '0xf208f4912782fd25c7f114ca3723a2d5dd6f3bcc3ac8db5af63baa85f711d5ec' -- ModifyLiquidity (index_topic_1 bytes32 id, index_topic_2 address sender, int24 tickLower, int24 tickUpper, int256 liquidityDelta, bytes32 salt)
+  ;
 
 
 
