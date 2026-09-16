@@ -1,4 +1,3 @@
-uniswap_v3/pools_create_table_and_initial_load.sql
 
 /*
 There are 2 SQL scripts first one for creating the table and define the specs, second one for initial load, 
