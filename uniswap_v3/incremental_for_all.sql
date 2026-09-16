@@ -16,7 +16,7 @@ window for that table alone.
 
 **pools runs first, and its watermark is shaped differently from the other
 three.** It is the dimension table every pool_address in this schema refers to,
-so it should never lag the facts that point at it. Two things about that:
+so it should never lag the facts that point at it. 
 
 
 */
