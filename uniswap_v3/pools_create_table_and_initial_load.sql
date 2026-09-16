@@ -19,7 +19,7 @@ joined on pool_address, and a pool's creation date has nothing to do with the da
 swaps referencing it, so partitioning by block_date would force every join to scan all
 partitions anyway. ~432k rows is small enough that clustering alone does the work.
 
-Needs the UDFs in [udf/hex_decoding_udfs.sql](https://github.com/arabianhorses/decentralizedanalysis.com/blob/main/udf/hex_decoding_udfs.sql):
+Needs the UDFs in (udf/hex_decoding_udfs.sql)[https://github.com/arabianhorses/decentralizedanalysis.com/blob/main/udf/hex_decoding_udfs.sql]:
 hex_to_uint (fee), hex_to_int (tickSpacing).
 
 */
