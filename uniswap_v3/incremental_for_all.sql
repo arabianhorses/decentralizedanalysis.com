@@ -1,21 +1,21 @@
 /*
-In this script there are 4 queries, for updating the pools, swaps,
-liquidity_movements and collects tables. We sync the raw logs table first, then
-run this.
+In this script there are 5 queries, for updating the pools, swaps,
+liquidity_movements, collects and flash tables. We sync the raw logs table first,
+then run this.
 
 max_date prunes partitions, so we scan less data.
 max_gidx (generatedIndex) is the forward cursor: it prunes further, and it is
 the only thing preventing duplicate inserts -- do not remove it. max_date alone
 does NOT stop duplicates.
 
-The four blocks share max_date and max_gidx. That is safe: SET assigns
+The five blocks share max_date and max_gidx. That is safe: SET assigns
 unconditionally, so a block whose first lookup finds nothing writes NULL instead
 of inheriting the previous block's value, and its own IF chain then widens the
 window for that table alone.
 
 
 **pools runs first, and its watermark is shaped differently from the other
-three.** It is the dimension table every pool_address in this schema refers to,
+four.** It is the dimension table every pool_address in this schema refers to,
 so it should never lag the facts that point at it. 
 
 
@@ -24,7 +24,7 @@ DECLARE max_date DATE;
 DECLARE max_gidx INT64;
 
 
-/* ==== 1/4  pools ======================================================== */
+/* ==== 1/5  pools ======================================================== */
 /* Dimension table, unpartitioned: one tier, no CURRENT_DATE() window. */
 
 SET max_date = (
@@ -77,7 +77,7 @@ WHERE block_date >= max_date
   ;
 
 
-/* ==== 2/4  swaps ======================================================== */
+/* ==== 2/5  swaps ======================================================== */
 
 SET max_date = (
   SELECT MAX(block_date)
@@ -141,7 +141,7 @@ WHERE block_date >= max_date
   ;
 
 
-/* ==== 3/4  liquidity_movements ========================================== */
+/* ==== 3/5  liquidity_movements ========================================== */
 /* Mint and Burn in one table, with the NPM tokenId attached where the position
    was opened through the position manager.
 
@@ -268,7 +268,7 @@ QUALIFY ROW_NUMBER() OVER (PARTITION BY m.generatedIndex ORDER BY n.generatedInd
   ;
 
 
-/* ==== 4/4  collects ===================================================== */
+/* ==== 4/5  collects ===================================================== */
 /* *** This is the table TVL needs. *** A Burn does NOT move tokens out of a v3
    pool -- it credits tokensOwed. Collect is where tokens actually leave:
 
@@ -352,4 +352,81 @@ LEFT JOIN npm_collect n
   /* The NPM emits its Collect after the pool's, in the same transaction. */
   AND n.generatedIndex   > c.generatedIndex
 QUALIFY ROW_NUMBER() OVER (PARTITION BY c.generatedIndex ORDER BY n.generatedIndex) = 1
+  ;
+
+/* ==== 5/5  flash ======================================================== */
+/* *** TVL needs this one too. *** paid0/paid1 are the fee the pool RETAINED,
+   not a gross repayment. The pool snapshots balance0Before, then the principal
+   goes out and comes back inside that window, and paid0 = balance0After -
+   balance0Before -- so the principal cancels and `amount0` is neutral. amount0
+   is NOT part of the balance identity; paid0 is, unnegated:
+
+     balance(token0) = SUM(Mint.amount0) + SUM(Swap.amount0, pool side)
+                       - SUM(Collect.amount0) + SUM(Flash.paid0)
+
+   Never `paid0 - amount0`: that subtracts the principal from the fee and drives
+   every flash pool deeply negative. DEVLOG.md:108 states it that way and is
+   wrong. On this chain paid/amount lands exactly on a fee tier (0.0001 / 0.0005
+   / 0.003 / 0.01) for every Flash, with zero rows where paid0 > amount0.
+
+   All four data words are uint256, so hex_to_uint, never hex_to_int -- a flash
+   amount with the high bit set would decode negative. No NPM join: Flash is a
+   pool-level call with no position, so there is no tokenId to attach. */
+
+SET max_date = (
+  SELECT MAX(block_date)
+  FROM `decentralizedanalysis.robinhood.robinhood_uniswapv3_flash`
+  WHERE block_date > CURRENT_DATE() - INTERVAL 2 DAY
+);
+
+IF max_date IS NULL THEN
+  SET max_date = (
+    SELECT MAX(block_date)
+    FROM `decentralizedanalysis.robinhood.robinhood_uniswapv3_flash`
+    WHERE block_date > DATE_TRUNC(CURRENT_DATE() - INTERVAL 30 DAY, MONTH)
+  );
+END IF;
+
+/* Same floor as the other blocks, deliberately conservative: the first Flash on
+   this chain is 2026-07-02, six weeks after the first PoolCreated. */
+IF max_date IS NULL THEN
+  SET max_date = DATE '2026-05-22';
+END IF;
+
+SET max_gidx = (
+  SELECT MAX(generatedIndex)
+  FROM `decentralizedanalysis.robinhood.robinhood_uniswapv3_flash`
+  WHERE block_date >= max_date
+);
+
+IF max_gidx IS NULL THEN
+  SET max_gidx = -1;
+END IF;
+
+INSERT INTO `decentralizedanalysis.robinhood.robinhood_uniswapv3_flash` (
+  block_date, block_hour, transaction_hash, pool_address, sender, recipient,
+  amount0, amount1, paid0, paid1,
+  block_number, transaction_index, log_index, generatedIndex, address, topics, data
+)
+SELECT
+  block_date
+, block_hour
+, transaction_hash
+, address                                                AS pool_address   -- the emitting contract IS the pool
+, CONCAT('0x', SUBSTR(topics[SAFE_OFFSET(1)], 27, 40))   AS sender         -- topic1: address
+, CONCAT('0x', SUBSTR(topics[SAFE_OFFSET(2)], 27, 40))   AS recipient      -- topic2: address
+, udf.hex_to_uint(SUBSTR(data,   3, 64))                 AS amount0        -- data word 0: uint256, lent out
+, udf.hex_to_uint(SUBSTR(data,  67, 64))                 AS amount1        -- data word 1: uint256, lent out
+, udf.hex_to_uint(SUBSTR(data, 131, 64))                 AS paid0          -- data word 2: uint256, fee retained
+, udf.hex_to_uint(SUBSTR(data, 195, 64))                 AS paid1          -- data word 3: uint256, fee retained
+, block_number, transaction_index, log_index
+, generatedIndex
+, address
+, topics, data
+FROM `decentralizedanalysis.robinhood.robinhood_uniswapv3_raw_logs`
+WHERE block_date >= max_date
+  AND generatedIndex > max_gidx
+  AND topic0 = '0xbdbdb71d7860376ba52b25a5028beea23581364a40522f6bcfb86bb1f2dca633'
+  /* Flash (index_topic_1 address sender, index_topic_2 address recipient,
+     uint256 amount0, uint256 amount1, uint256 paid0, uint256 paid1) */
   ;
