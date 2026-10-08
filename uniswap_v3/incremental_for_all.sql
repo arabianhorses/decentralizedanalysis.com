@@ -1,6 +1,6 @@
 /*
-In this script there are 5 queries, for updating the pools, swaps,
-liquidity_movements, collects and flash tables. We sync the raw logs table first,
+In this script there are 6 queries, for updating the pools, swaps,
+liquidity_movements, collects, flash and set_fee_protocol tables. We sync the raw logs table first,
 then run this.
 
 max_date prunes partitions, so we scan less data.
@@ -8,7 +8,7 @@ max_gidx (generatedIndex) is the forward cursor: it prunes further, and it is
 the only thing preventing duplicate inserts -- do not remove it. max_date alone
 does NOT stop duplicates.
 
-The five blocks share max_date and max_gidx. That is safe: SET assigns
+The six blocks share max_date and max_gidx. That is safe: SET assigns
 unconditionally, so a block whose first lookup finds nothing writes NULL instead
 of inheriting the previous block's value, and its own IF chain then widens the
 window for that table alone.
@@ -24,7 +24,7 @@ DECLARE max_date DATE;
 DECLARE max_gidx INT64;
 
 
-/* ==== 1/5  pools ======================================================== */
+/* ==== 1/6  pools ======================================================== */
 /* Dimension table, unpartitioned: one tier, no CURRENT_DATE() window. */
 
 SET max_date = (
@@ -77,7 +77,7 @@ WHERE block_date >= max_date
   ;
 
 
-/* ==== 2/5  swaps ======================================================== */
+/* ==== 2/6  swaps ======================================================== */
 
 SET max_date = (
   SELECT MAX(block_date)
@@ -141,7 +141,7 @@ WHERE block_date >= max_date
   ;
 
 
-/* ==== 3/5  liquidity_movements ========================================== */
+/* ==== 3/6  liquidity_movements ========================================== */
 /* Mint and Burn in one table, with the NPM tokenId attached where the position
    was opened through the position manager.
 
@@ -268,7 +268,7 @@ QUALIFY ROW_NUMBER() OVER (PARTITION BY m.generatedIndex ORDER BY n.generatedInd
   ;
 
 
-/* ==== 4/5  collects ===================================================== */
+/* ==== 4/6  collects ===================================================== */
 /* *** This is the table TVL needs. *** A Burn does NOT move tokens out of a v3
    pool -- it credits tokensOwed. Collect is where tokens actually leave:
 
@@ -354,7 +354,7 @@ LEFT JOIN npm_collect n
 QUALIFY ROW_NUMBER() OVER (PARTITION BY c.generatedIndex ORDER BY n.generatedIndex) = 1
   ;
 
-/* ==== 5/5  flash ======================================================== */
+/* ==== 5/6  flash ======================================================== */
 /* *** TVL needs this one too. *** paid0/paid1 are the fee the pool RETAINED,
    not a gross repayment. The pool snapshots balance0Before, then the principal
    goes out and comes back inside that window, and paid0 = balance0After -
@@ -429,4 +429,66 @@ WHERE block_date >= max_date
   AND topic0 = '0xbdbdb71d7860376ba52b25a5028beea23581364a40522f6bcfb86bb1f2dca633'
   /* Flash (index_topic_1 address sender, index_topic_2 address recipient,
      uint256 amount0, uint256 amount1, uint256 paid0, uint256 paid1) */
+  ;
+
+
+/* ==== 6/6  set_fee_protocol ============================================= */
+/* SetFeeProtocol: per-pool protocol share, 1/N of each side's swap fee, 0 = off.
+   Added 2026-10-08; history back to block 9,490 was loaded directly (first
+   event 2026-07-27). All four values are uint8, so the low 8 bytes of each
+   word cast safely to INT64. */
+
+SET max_date = (
+  SELECT MAX(block_date)
+  FROM `decentralizedanalysis.robinhood.robinhood_uniswapv3_set_fee_protocol`
+  WHERE block_date > CURRENT_DATE() - INTERVAL 2 DAY
+);
+
+IF max_date IS NULL THEN
+  SET max_date = (
+    SELECT MAX(block_date)
+    FROM `decentralizedanalysis.robinhood.robinhood_uniswapv3_set_fee_protocol`
+    WHERE block_date > DATE_TRUNC(CURRENT_DATE() - INTERVAL 30 DAY, MONTH)
+  );
+END IF;
+
+/* Floor at the first event, not 2026-05-22: nothing exists before it. */
+IF max_date IS NULL THEN
+  SET max_date = DATE '2026-07-27';
+END IF;
+
+SET max_gidx = (
+  SELECT MAX(generatedIndex)
+  FROM `decentralizedanalysis.robinhood.robinhood_uniswapv3_set_fee_protocol`
+  WHERE block_date >= max_date
+);
+
+IF max_gidx IS NULL THEN
+  SET max_gidx = -1;
+END IF;
+
+INSERT INTO `decentralizedanalysis.robinhood.robinhood_uniswapv3_set_fee_protocol` (
+  block_date, block_hour, block_number, transaction_hash, transaction_index, log_index,
+  generatedIndex, pool_address,
+  fee_protocol0_old, fee_protocol1_old, fee_protocol0_new, fee_protocol1_new
+)
+SELECT
+  block_date
+, block_hour
+, block_number
+, transaction_hash
+, transaction_index
+, log_index
+, generatedIndex
+, address                                                AS pool_address   -- the emitting contract IS the pool
+, CAST(CONCAT('0x', SUBSTR(data,  51, 16)) AS INT64)     AS fee_protocol0_old  -- data word 0: uint8
+, CAST(CONCAT('0x', SUBSTR(data, 115, 16)) AS INT64)     AS fee_protocol1_old  -- data word 1: uint8
+, CAST(CONCAT('0x', SUBSTR(data, 179, 16)) AS INT64)     AS fee_protocol0_new  -- data word 2: uint8
+, CAST(CONCAT('0x', SUBSTR(data, 243, 16)) AS INT64)     AS fee_protocol1_new  -- data word 3: uint8
+FROM `decentralizedanalysis.robinhood.robinhood_uniswapv3_raw_logs`
+WHERE block_date >= max_date
+  AND generatedIndex > max_gidx
+  AND topic0 = '0x973d8d92bb299f4af6ce49b52a8adb85ae46b9f214c4c4fc06ac77401237b133'
+  /* SetFeeProtocol (uint8 feeProtocol0Old, uint8 feeProtocol1Old,
+     uint8 feeProtocol0New, uint8 feeProtocol1New) */
   ;
